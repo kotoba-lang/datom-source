@@ -102,3 +102,35 @@
       (let [v' (src/absorb v [{:s "x" :p "unrelated" :o "y"}])]
         (is (= (src/scan-set v [nil "knows" nil])
                (src/scan-set v' [nil "knows" nil])))))))
+
+;; ── scan cache ───────────────────────────────────────────────────────
+
+(deftest cached-conforms-and-collapses-repeats
+  (testing "a cache that changes an answer is a bug, not a cache"
+    (is (empty? (conf/check #(src/cached (src/of-quads %))))))
+  (testing "a repeated pattern reaches the source once"
+    (let [calls (atom 0)
+          base (reify src/IPatternSource
+                 (-scan [_ p] (swap! calls inc)
+                   (src/scan-set (src/of-quads conf/corpus) p)))
+          c (src/cached base)]
+      (dotimes [_ 5] (src/scan c [nil "knows" nil]))
+      (is (= 1 @calls))
+      (is (= {:patterns 1 :quads 2} (src/cache-stats c)))))
+  (testing "distinct patterns are not conflated"
+    (let [c (src/cached (src/of-quads conf/corpus))]
+      (src/scan c [nil "knows" nil])
+      (src/scan c [nil "likes" nil])
+      (is (= 2 (:patterns (src/cache-stats c)))))))
+
+(deftest a-scan-cache-is-scoped-to-a-snapshot-not-to-a-source
+  (testing "the documented hazard, asserted so it is not a surprise: a pattern
+           is not a version, so a cache outliving a write answers from the past"
+    (let [quads (atom (vec conf/corpus))
+          live (reify src/IPatternSource
+                 (-scan [_ p] (src/scan-set (src/of-quads @quads) p)))
+          c (src/cached live)
+          before (src/scan-set c [nil "knows" nil])]
+      (swap! quads conj {:s "carol" :p "knows" :o "dave"})
+      (is (= before (src/scan-set c [nil "knows" nil])) "stale, by design")
+      (is (not= before (src/scan-set live [nil "knows" nil])) "the source moved on"))))

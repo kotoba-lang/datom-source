@@ -30,6 +30,7 @@ interchangeable rather than merely similar.
 | `counting` | records scans and quads. Comparing designs needs a number that is not wall-clock |
 | `view` | precomputed answers for named patterns — the read-time cost removed rather than reduced |
 | `absorb` | fold newly-asserted quads into a view incrementally |
+| `cached` | memoize scans by pattern — pairs with `kotoba-lang/block-cache` |
 
 Combinators are themselves sources, so they nest.
 
@@ -41,6 +42,14 @@ covered says nothing about `["alice" "knows" nil]`). Pass
 `{:fallback? false}` to make an uncovered pattern throw rather than silently
 cost a full scan. Retractions are not supported: folding an assertion into a
 set is monotonic, removing one is not.
+
+`cached` and [`block-cache`](https://github.com/kotoba-lang/block-cache) solve
+different halves and neither subsumes the other. `block-cache` dedupes the
+BLOCK reads under a scan and its key is content-addressed, so it can never go
+stale. `cached` dedupes the scans themselves — measured on a recursive Datalog
+rule, the fixpoint issued 22 scans and every one was the *same* pattern — but a
+pattern is **not** a version, so scope it to one query or to a snapshot you know
+is immutable.
 
 ## Conformance
 

@@ -205,3 +205,47 @@
   "Which patterns this view answers without falling through."
   [^ViewSource v]
   (set (keys (.-answers v))))
+
+;; ── scan cache: the other half of the block cache ────────────────────
+;; `block-cache` dedupes the BLOCK reads under a scan. This dedupes the scans
+;; themselves, which is a different and larger win in one specific place:
+;; fixpoint evaluation. Measured 2026-08-01, a recursive Datalog rule over a
+;; chain issued 22 scans and they were all the SAME pattern -- semi-naive
+;; evaluation shrinks the binding frontier each round but does not specialize
+;; the clause, so `[_ "next" _]` is re-asked every iteration.
+;;
+;; The two compose and neither subsumes the other: without the scan cache the
+;; block cache still pays the decode and set-construction per repeat; without
+;; the block cache a scan cache does nothing for the first scan of each
+;; distinct pattern.
+
+(defrecord ^:no-doc CachedSource [src cache]
+  IPatternSource
+  (-scan [_ pattern]
+    (if-let [hit (find @cache pattern)]
+      (val hit)
+      (let [r (scan-set src pattern)]
+        (swap! cache assoc pattern r)
+        r))))
+
+(defn cached
+  "Memoize scans by pattern.
+
+  **Scope this to one query, not to a source that outlives writes.** Unlike
+  `block-cache`, whose key is content-addressed and therefore cannot go
+  stale, a PATTERN is not a version — the same pattern against the same
+  source returns different answers after a write. The safe lifetime is a
+  single query, or a source you know to be an immutable snapshot. Handing a
+  long-lived `cached` to a mutating store is how a database starts answering
+  from the past.
+
+  `cache-atom` is exposed so a caller can share one cache across several
+  queries it knows to be against the same snapshot, and inspect it."
+  ([src] (cached src (atom {})))
+  ([src cache-atom] (->CachedSource src cache-atom)))
+
+(defn cache-stats
+  "`{:patterns n :quads n}` for a `cached` source."
+  [^CachedSource c]
+  (let [m @(.-cache c)]
+    {:patterns (count m) :quads (reduce + 0 (map count (vals m)))}))
