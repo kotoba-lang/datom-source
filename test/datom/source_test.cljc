@@ -57,3 +57,48 @@
   (is (= #{:s :p} (src/bound-positions ["a" "b" nil])))
   (is (= 3 (src/selectivity-hint [nil nil nil])))
   (is (= 0 (src/selectivity-hint ["a" "b" "c"]))))
+
+;; ── brick 3: views ───────────────────────────────────────────────────
+
+(deftest a-view-over-every-pattern-conforms
+  (testing "if a view answers all the suite's patterns it must answer them
+           the same way -- otherwise it is a cache with a bug"
+    (let [mk (fn [quads]
+               (src/view (src/of-quads quads) (map second conf/cases)))]
+      (is (empty? (conf/check mk)) (conf/report (conf/check mk))))))
+
+(deftest a-partial-view-falls-through-or-refuses
+  (let [base (src/of-quads conf/corpus)
+        covered [nil "knows" nil]]
+    (testing "covered patterns are answered from the view"
+      (let [v (src/view base [covered])]
+        (is (= (src/scan-set base covered) (src/scan-set v covered)))
+        (is (= #{covered} (src/coverage v)))))
+    (testing "uncovered patterns fall through by default"
+      (let [v (src/view base [covered])]
+        (is (= (src/scan-set base ["alice" nil nil])
+               (src/scan-set v ["alice" nil nil])))))
+    (testing "and refuse loudly when the view exists to bound latency"
+      (let [v (src/view base [covered] {:fallback? false})]
+        (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                     (src/scan v ["alice" nil nil])))))))
+
+(deftest a-view-does-not-follow-its-source-until-absorbed
+  (let [quads (atom (vec conf/corpus))
+        live (reify src/IPatternSource
+               (-scan [_ pattern] (src/scan-set (src/of-quads @quads) pattern)))
+        v (src/view live [[nil "knows" nil]])
+        newq {:s "carol" :p "knows" :o "dave"}]
+    (swap! quads conj newq)
+    (testing "the source sees the new fact"
+      (is (contains? (src/scan-set live [nil "knows" nil]) newq)))
+    (testing "the view does NOT -- this is the staleness a caller must know about"
+      (is (not (contains? (src/scan-set v [nil "knows" nil]) newq))))
+    (testing "absorb folds it in, touching only the covered patterns"
+      (let [v' (src/absorb v [newq])]
+        (is (= (src/scan-set live [nil "knows" nil])
+               (src/scan-set v' [nil "knows" nil])))))
+    (testing "and absorb ignores quads that match nothing covered"
+      (let [v' (src/absorb v [{:s "x" :p "unrelated" :o "y"}])]
+        (is (= (src/scan-set v [nil "knows" nil])
+               (src/scan-set v' [nil "knows" nil])))))))

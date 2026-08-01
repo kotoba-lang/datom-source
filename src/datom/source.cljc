@@ -136,3 +136,72 @@
   having to expose statistics it may not have."
   [pattern]
   (- 3 (count (bound-positions pattern))))
+
+;; ── brick 3: precomputed views ───────────────────────────────────────
+;; The other way out of an expensive read is to have done the work at write
+;; time. RisingWave's whole design is this: define the view, maintain it
+;; incrementally as facts arrive, and the read becomes a lookup. `merged` and
+;; compaction make the scan cheaper; a view removes it.
+;;
+;; The honest limit is stated in `view`'s docstring rather than discovered
+;; later: a view answers the patterns it was built for and nothing else, and
+;; it does not follow its underlying source. Both of those are properties a
+;; caller must know, because the failure mode of the second one is a
+;; confidently wrong answer rather than an error.
+
+(defrecord ^:no-doc ViewSource [answers fallback]
+  IPatternSource
+  (-scan [_ pattern]
+    (if-let [cached (get answers pattern)]
+      cached
+      (if fallback
+        (scan fallback pattern)
+        (throw (ex-info "pattern not covered by this view, and no fallback"
+                        {:problem ::uncovered-pattern
+                         :pattern pattern
+                         :covered (vec (keys answers))}))))))
+
+(defn view
+  "Precompute `patterns` against `src`. A scan for a covered pattern is a map
+  lookup; anything else falls through to `src`.
+
+  Two things a caller has to know, because neither announces itself:
+
+  1. **A view does not follow its source.** Facts asserted after construction
+     are invisible until `absorb`ed. That is what makes the read cheap and it
+     is also how a view goes quietly stale — the answer stays confident.
+  2. **Coverage is exact.** `[nil \"knows\" nil]` being covered says nothing
+     about `[\"alice\" \"knows\" nil]`. Pass `:fallback? false` to make an
+     uncovered pattern throw instead of silently costing a full scan, which
+     is what you want when the view is there to bound latency."
+  ([src patterns] (view src patterns {}))
+  ([src patterns {:keys [fallback?] :or {fallback? true}}]
+   (->ViewSource (into {} (map (juxt identity #(scan-set src %))) patterns)
+                 (when fallback? src))))
+
+(defn- pattern-matches? [pattern quad] (matches? quad pattern))
+
+(defn absorb
+  "Fold newly-asserted `quads` into a view, incrementally.
+
+  Only the covered patterns are touched, and only by the quads that match
+  them — the cost is O(new-quads x patterns), not O(database). This is the
+  write-time half of the trade: a view is cheap to read exactly to the extent
+  that somebody keeps paying this.
+
+  RETRACTIONS ARE NOT SUPPORTED. Folding an assertion into a set is
+  monotonic; removing one is not, and a view that quietly kept a retracted
+  fact would be worse than no view. Rebuild with `view` after a retraction."
+  [^ViewSource v quads]
+  (->ViewSource
+   (reduce-kv (fn [m pattern cached]
+                (assoc m pattern
+                       (into cached (filter #(pattern-matches? pattern %)) quads)))
+              {}
+              (.-answers v))
+   (.-fallback v)))
+
+(defn coverage
+  "Which patterns this view answers without falling through."
+  [^ViewSource v]
+  (set (keys (.-answers v))))

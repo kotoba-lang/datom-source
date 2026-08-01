@@ -28,8 +28,19 @@ interchangeable rather than merely similar.
 | `merged` | k sources as one. A partitioned root is a merge of its partitions |
 | `filtered` | post-filter (e.g. `visible?`), as a wrapper so it cannot be forgotten |
 | `counting` | records scans and quads. Comparing designs needs a number that is not wall-clock |
+| `view` | precomputed answers for named patterns — the read-time cost removed rather than reduced |
+| `absorb` | fold newly-asserted quads into a view incrementally |
 
 Combinators are themselves sources, so they nest.
+
+`view` has two properties a caller must know, because neither announces
+itself: a view **does not follow its source** (facts asserted after
+construction are invisible until `absorb`ed — it goes quietly stale while
+staying confident), and **coverage is exact** (`[nil "knows" nil]` being
+covered says nothing about `["alice" "knows" nil]`). Pass
+`{:fallback? false}` to make an uncovered pattern throw rather than silently
+cost a full scan. Retractions are not supported: folding an assertion into a
+set is monotonic, removing one is not.
 
 ## Conformance
 
