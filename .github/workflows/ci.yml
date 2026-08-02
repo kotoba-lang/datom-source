@@ -1,0 +1,57 @@
+name: CI
+
+# This repo had NO CI at all, and it is the sole runtime dependency of
+# `kotoba-lang/datalog`. That is the worst place in the fleet for a gap: the
+# recurring defect this month has been `.cljc` whose ClojureScript half is
+# broken while the JVM half is green, and the runtime that actually ships is
+# the cljs one (the object-store and D1 workers are Cloudflare Workers).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: JVM + CLJS + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Cache m2 / gitlibs
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2
+            ~/.gitlibs
+          key: ${{ runner.os }}-cljdeps-${{ hashFiles('deps.edn') }}
+          restore-keys: ${{ runner.os }}-cljdeps-
+
+      - name: JVM tests (compat gate)
+        run: clojure -M:test
+
+      # COMPILE, then run node -- deliberately not `cljs.main ... -m ns`.
+      # Measured: with `-m`, a suite with a failing assertion still exits 0,
+      # so the gate is green forever. The report hook fires and sets
+      # `process.exitCode`, but that code does not survive out through
+      # cljs.main. Compiling to a script and running node directly makes
+      # node's own exit status the gate, and it does propagate -- verified in
+      # both directions before this workflow was written.
+      - name: CLJS tests (primary gate — real ClojureScript, node target)
+        run: |
+          clojure -Sdeps '{:paths ["src" "test"]}' -M:cljs -m cljs.main \
+            --target node --output-to out/tests.js -c datom.cljs-runner
+          node out/tests.js
+
+      - name: Lint (clj-kondo, errors fail)
+        run: clojure -M:lint
