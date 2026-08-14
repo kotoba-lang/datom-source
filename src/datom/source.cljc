@@ -55,6 +55,90 @@
   [src pattern]
   (into #{} (scan src pattern)))
 
+;; ── value range ──────────────────────────────────────────────────────
+;; A pattern scan is a prefix. A value interval is not: `[?e :age ?a]` plus
+;; `[(>= ?a 18)] [(< ?a 65)]` is `[18, 65)` on the object, and the only
+;; honest way to answer it cheaply is to cut that interval in the store.
+;; HMAC-blinded covering keys cannot do that; order-preserving encodings
+;; and columnar min/max can. This protocol is the seam both sit behind.
+;;
+;; Default interval is `[lo, hi)` — lo inclusive, hi exclusive — matching
+;; Datomic `index-range` and lake byte-range. A nil bound is unbounded.
+
+(defn- type-rank
+  "Stable order across mixed types so `compare` is never asked to throw.
+  nil < bool < number < string < keyword < symbol < everything else."
+  [x]
+  (cond
+    (nil? x) 0
+    (boolean? x) 1
+    (number? x) 2
+    (string? x) 3
+    (keyword? x) 4
+    (symbol? x) 5
+    :else 6))
+
+(defn value-compare
+  "Total order used by range cuts. Mixed types compare by `type-rank`,
+  then within a rank by `compare` (or `pr-str` for the catch-all)."
+  [a b]
+  (let [ra (type-rank a) rb (type-rank b)]
+    (if (not= ra rb)
+      (compare ra rb)
+      (if (= 6 ra)
+        (compare (pr-str a) (pr-str b))
+        (compare a b)))))
+
+(defn in-range?
+  "True when `v` is in the interval described by `lo`/`hi`/`opts`.
+  Default `opts` is `{ :lo-open? false :hi-open? true }` — `[lo, hi)`.
+  A nil bound is unbounded."
+  ([v lo hi] (in-range? v lo hi {}))
+  ([v lo hi {:keys [lo-open? hi-open?] :or {lo-open? false hi-open? true}}]
+   (let [c-lo (when (some? lo) (value-compare v lo))
+         c-hi (when (some? hi) (value-compare v hi))]
+     (and (or (nil? c-lo) (if lo-open? (pos? c-lo) (not (neg? c-lo))))
+          (or (nil? c-hi) (if hi-open? (neg? c-hi) (not (pos? c-hi))))))))
+
+(defprotocol IRangeSource
+  "Optional. A source that can cut `[lo, hi)` on one attribute without
+  scanning every value of that attribute.
+
+  `attr` is the predicate (ground). `lo`/`hi` are value bounds; nil is
+  unbounded. `opts` is `{:lo-open? bool :hi-open? bool}`.
+
+  Implementations MUST return every matching quad exactly once and MUST
+  not return a quad whose `:p` is not `attr` or whose `:o` fails
+  `in-range?`. Order is not guaranteed — same contract as `-scan`.
+
+  A source that cannot prune (HMAC-blinded keys, hash maps) MAY still
+  implement this by scanning the attribute and filtering: the protocol
+  is the call shape, not a promise of I/O savings. Callers that need
+  to know whether the cut was cheap must measure, the way `counting`
+  already does for scans."
+  (-scan-range [this attr lo hi opts]))
+
+(defn- fallback-range
+  "Attribute prefix + `in-range?`. Correct for every IPatternSource, and
+  the thing a source that does not implement IRangeSource degrades to."
+  [src attr lo hi opts]
+  (into #{}
+        (filter #(in-range? (:o %) lo hi opts))
+        (scan src [nil attr nil])))
+
+(defn scan-range
+  "Quads of `attr` whose object is in `[lo, hi)` (see `in-range?`).
+
+  Uses `IRangeSource` when the source implements it; otherwise the
+  attribute scan plus a value filter. That fallback is correct and
+  may be the whole tree — which is why lake/columnar and prolly-tree
+  implement the protocol rather than relying on it."
+  ([src attr lo hi] (scan-range src attr lo hi {}))
+  ([src attr lo hi opts]
+   (if (satisfies? IRangeSource src)
+     (-scan-range src attr lo hi opts)
+     (fallback-range src attr lo hi opts))))
+
 ;; ── combinators ──────────────────────────────────────────────────────
 ;; Each of these is a source, so they nest. That is what makes the pieces
 ;; composable rather than merely pluggable.
@@ -66,7 +150,13 @@
 
 (defrecord ^:no-doc SeqSource [quads]
   IPatternSource
-  (-scan [_ pattern] (into #{} (filter #(matches? % pattern)) quads)))
+  (-scan [_ pattern] (into #{} (filter #(matches? % pattern)) quads))
+  IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (into #{} (filter (fn [q]
+                        (and (or (nil? attr) (= attr (:p q)))
+                             (in-range? (:o q) lo hi opts)))
+                      quads))))
 
 (defn of-quads
   "The reference source: a seq of quads, filtered per scan. O(n) per query and
@@ -78,7 +168,10 @@
 (defrecord ^:no-doc MergedSource [sources]
   IPatternSource
   (-scan [_ pattern]
-    (reduce (fn [acc s] (into acc (scan s pattern))) #{} sources)))
+    (reduce (fn [acc s] (into acc (scan s pattern))) #{} sources))
+  IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (reduce (fn [acc s] (into acc (scan-range s attr lo hi opts))) #{} sources)))
 
 (defn merged
   "One source over many. This is what a partitioned root reads through: each
@@ -92,7 +185,10 @@
 
 (defrecord ^:no-doc FilteredSource [src pred]
   IPatternSource
-  (-scan [_ pattern] (into #{} (filter pred) (scan src pattern))))
+  (-scan [_ pattern] (into #{} (filter pred) (scan src pattern)))
+  IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (into #{} (filter pred) (scan-range src attr lo hi opts))))
 
 (defn filtered
   "Post-filter every quad, e.g. the `visible?` predicate `arrangement.query`
@@ -107,6 +203,12 @@
   (-scan [_ pattern]
     (swap! calls inc)
     (let [r (scan src pattern)]
+      (swap! quads + (count r))
+      r))
+  IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (swap! calls inc)
+    (let [r (scan-range src attr lo hi opts)]
       (swap! quads + (count r))
       r)))
 
@@ -159,7 +261,14 @@
         (throw (ex-info "pattern not covered by this view, and no fallback"
                         {:problem ::uncovered-pattern
                          :pattern pattern
-                         :covered (vec (keys answers))}))))))
+                         :covered (vec (keys answers))})))))
+  IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (if fallback
+      (scan-range fallback attr lo hi opts)
+      (throw (ex-info "range not covered by this view, and no fallback"
+                      {:problem ::uncovered-range
+                       :attr attr :lo lo :hi hi})))))
 
 (defn view
   "Precompute `patterns` against `src`. A scan for a covered pattern is a map
@@ -226,7 +335,15 @@
       (val hit)
       (let [r (scan-set src pattern)]
         (swap! cache assoc pattern r)
-        r))))
+        r)))
+  IRangeSource
+  (-scan-range [_ attr lo hi opts]
+    (let [k [:range attr lo hi opts]]
+      (if-let [hit (find @cache k)]
+        (val hit)
+        (let [r (into #{} (scan-range src attr lo hi opts))]
+          (swap! cache assoc k r)
+          r)))))
 
 (defn cached
   "Memoize scans by pattern.
