@@ -134,3 +134,25 @@
       (swap! quads conj {:s "carol" :p "knows" :o "dave"})
       (is (= before (src/scan-set c [nil "knows" nil])) "stale, by design")
       (is (not= before (src/scan-set live [nil "knows" nil])) "the source moved on"))))
+
+(deftest in-range-is-half-open-and-mixed-types-do-not-throw
+  (is (true? (src/in-range? 5 0 10)))
+  (is (false? (src/in-range? 10 0 10)) "hi exclusive")
+  (is (true? (src/in-range? 10 0 10 {:hi-open? false})))
+  (is (false? (src/in-range? 0 0 10 {:lo-open? true})))
+  (is (true? (src/in-range? "b" "a" "c")))
+  (is (true? (src/in-range? 1 nil 2)))
+  (is (false? (src/in-range? "a" 0 10)) "mixed types compare by rank, not throw"))
+
+(deftest scan-range-on-the-reference-source
+  (let [src (src/of-quads [{:s "a" :p "age" :o 10}
+                           {:s "b" :p "age" :o 20}
+                           {:s "c" :p "age" :o 30}
+                           {:s "d" :p "name" :o "x"}])]
+    (is (= #{{:s "b" :p "age" :o 20}}
+           (src/scan-range src "age" 15 25)))
+    (testing "merged and filtered still range"
+      (let [m (src/merged [(src/of-quads [{:s "a" :p "age" :o 10}])
+                           (src/of-quads [{:s "b" :p "age" :o 20}])])]
+        (is (= #{{:s "b" :p "age" :o 20}} (src/scan-range m "age" 15 25))))
+      (is (= #{} (src/scan-range (src/filtered src #(= "a" (:s %))) "age" 15 25))))))
