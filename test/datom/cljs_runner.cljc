@@ -13,7 +13,9 @@
     clojure -Sdeps '{:paths [\"src\" \"test\"]}' -M:cljs \\
       -m cljs.main --target node -m datom.cljs-runner"
   (:require [clojure.test :as t :refer [run-tests]]
-            [datom.source-test]))
+            [datom.source-test]
+            [datom.source.adjacency-test]
+            [datom.source.plane-test]))
 
 #?(:cljs
    (defmethod t/report [:cljs.test/default :end-run-tests] [m]
@@ -21,6 +23,9 @@
      (when-not (t/successful? m)
        (set! (.-exitCode js/process) 1))))
 
-(defn -main [] (run-tests 'datom.source-test))
+(defn -main []
+  (run-tests 'datom.source-test
+             'datom.source.adjacency-test
+             'datom.source.plane-test))
 
 #?(:cljs (-main))
