@@ -31,6 +31,8 @@ interchangeable rather than merely similar.
 | `view` | precomputed answers for named patterns — the read-time cost removed rather than reduced |
 | `absorb` | fold newly-asserted quads into a view incrementally |
 | `cached` | memoize scans by pattern — pairs with `kotoba-lang/block-cache` |
+| `datom.source.adjacency` | brick 4: out/in maps. One hop is O(degree), not O(database) |
+| `datom.source.plane` | query-class → serving plane. `admit` refuses hydrate-then-scan / GraphSync-as-query |
 
 Combinators are themselves sources, so they nest.
 
