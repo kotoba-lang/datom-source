@@ -15,7 +15,8 @@
   (:require [clojure.test :as t :refer [run-tests]]
             [datom.source-test]
             [datom.source.adjacency-test]
-            [datom.source.plane-test]))
+            [datom.source.plane-test]
+            [kotobase.datom-plan-test]))
 
 #?(:cljs
    (defmethod t/report [:cljs.test/default :end-run-tests] [m]
@@ -26,6 +27,7 @@
 (defn -main []
   (run-tests 'datom.source-test
              'datom.source.adjacency-test
-             'datom.source.plane-test))
+             'datom.source.plane-test
+             'kotobase.datom-plan-test))
 
 #?(:cljs (-main))
