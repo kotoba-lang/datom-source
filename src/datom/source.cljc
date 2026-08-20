@@ -221,7 +221,7 @@
   ([src calls quads] (->CountingSource src calls quads)))
 
 (defn counts [^CountingSource src]
-  {:scans @(.-calls src) :quads @(.-quads src)})
+  {:scans @(:calls src) :quads @(:quads src)})
 
 ;; ── pattern helpers ──────────────────────────────────────────────────
 
@@ -307,13 +307,13 @@
                 (assoc m pattern
                        (into cached (filter #(pattern-matches? pattern %)) quads)))
               {}
-              (.-answers v))
-   (.-fallback v)))
+              (:answers v))
+   (:fallback v)))
 
 (defn coverage
   "Which patterns this view answers without falling through."
   [^ViewSource v]
-  (set (keys (.-answers v))))
+  (set (keys (:answers v))))
 
 ;; ── scan cache: the other half of the block cache ────────────────────
 ;; `block-cache` dedupes the BLOCK reads under a scan. This dedupes the scans
@@ -364,5 +364,5 @@
 (defn cache-stats
   "`{:patterns n :quads n}` for a `cached` source."
   [^CachedSource c]
-  (let [m @(.-cache c)]
+  (let [m @(:cache c)]
     {:patterns (count m) :quads (reduce + 0 (map count (vals m)))}))

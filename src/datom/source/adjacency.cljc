@@ -96,5 +96,5 @@
 (defn stats
   "The lookups atom, or zeros if the graph was built without one."
   [^Adjacency g]
-  (or (some-> (.-lookups g) deref)
+  (or (some-> (:lookups g) deref)
       {:out-lookups 0 :in-lookups 0 :scans 0}))
