@@ -1,5 +1,5 @@
 (ns datom.source-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.test :refer [deftest is testing #?(:cljs async)]]
             [datom.source :as src]
             [datom.source.conformance :as conf]))
 
@@ -156,3 +156,29 @@
                            (src/of-quads [{:s "b" :p "age" :o 20}])])]
         (is (= #{{:s "b" :p "age" :o 20}} (src/scan-range m "age" 15 25))))
       (is (= #{} (src/scan-range (src/filtered src #(= "a" (:s %))) "age" 15 25))))))
+
+#?(:cljs
+   (deftest async-pattern-and-range-contracts
+     (async done
+       (let [calls (atom [])
+             quads #{{:s "a" :p "age" :o 10}
+                     {:s "b" :p "age" :o 20}
+                     {:s "c" :p "name" :o "c"}}
+             source (reify src/IAsyncPatternSource
+                      (-scan-async [_ pattern]
+                        (swap! calls conj pattern)
+                        (js/Promise.resolve
+                         (src/scan-set (src/of-quads quads) pattern))))]
+         (-> (src/scan-async source [nil "age" nil])
+             (.then (fn [rows]
+                      (is (= #{{:s "a" :p "age" :o 10}
+                               {:s "b" :p "age" :o 20}}
+                             rows))
+                      (src/scan-range-async source "age" 15 25)))
+             (.then (fn [rows]
+                      (is (= #{{:s "b" :p "age" :o 20}} rows))
+                      (is (= [[nil "age" nil] [nil "age" nil]] @calls))
+                      (done)))
+             (.catch (fn [e]
+                       (is false (str "async source threw: " e))
+                       (done))))))))

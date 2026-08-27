@@ -55,6 +55,18 @@
   [src pattern]
   (into #{} (scan src pattern)))
 
+(defprotocol IAsyncPatternSource
+  "Worker-native counterpart to `IPatternSource`. `-scan-async` returns an
+  async value of unique matching quads. On ClojureScript that value is a
+  Promise. The matching and ordering contract is otherwise identical to
+  `IPatternSource`."
+  (-scan-async [this pattern]))
+
+(defn scan-async
+  "Async value of quads matching `pattern` in an async source."
+  [src pattern]
+  (-scan-async src pattern))
+
 ;; ── value range ──────────────────────────────────────────────────────
 ;; A pattern scan is a prefix. A value interval is not: `[?e :age ?a]` plus
 ;; `[(>= ?a 18)] [(< ?a 65)]` is `[18, 65)` on the object, and the only
@@ -138,6 +150,25 @@
    (if (satisfies? IRangeSource src)
      (-scan-range src attr lo hi opts)
      (fallback-range src attr lo hi opts))))
+
+(defprotocol IAsyncRangeSource
+  "Optional async value-range source. The result contract is identical to
+  `IRangeSource`; a ClojureScript implementation returns a Promise."
+  (-scan-range-async [this attr lo hi opts]))
+
+#?(:cljs
+   (defn scan-range-async
+     "Promise of quads in the requested value interval. Falls back to one
+     async attribute scan when the source has no native range cut."
+     ([src attr lo hi] (scan-range-async src attr lo hi {}))
+     ([src attr lo hi opts]
+      (if (satisfies? IAsyncRangeSource src)
+        (-scan-range-async src attr lo hi opts)
+        (-> (scan-async src [nil attr nil])
+            (.then (fn [quads]
+                     (into #{}
+                           (filter #(in-range? (:o %) lo hi opts))
+                           quads))))))))
 
 ;; ── combinators ──────────────────────────────────────────────────────
 ;; Each of these is a source, so they nest. That is what makes the pieces
