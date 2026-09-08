@@ -12,7 +12,7 @@
   implementing repo to adopt this repo's test framework, runner and platform
   conditionals is a dependency, not a contract. `check` returns data; each
   repo spends one `deftest` on it."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [datom.source :as src]))
 
 (def corpus
