@@ -72,5 +72,5 @@ means something.
 ## Run
 
 ```
-clojure -M:test
+kbb -M:test
 ```
