@@ -14,7 +14,7 @@
   ;; PRIMARY gate: the same portable suite under real ClojureScript. No npm
   ;; and no shadow-cljs, because this library has zero runtime deps and
   ;; `cljs.main --target node` needs neither -- same shape `merkle-sum` uses.
-  ;;   clojure -Sdeps '{:paths ["src" "test"]}' -M:cljs \
+  ;;   kbb -Sdeps '{:paths ["src" "test"]}' -M:cljs \
   ;;     -m cljs.main --target node -m datom.cljs-runner
   :cljs {:extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}}}
   ;; clj-kondo as a Clojars lib (no Homebrew/system install needed). It earns
