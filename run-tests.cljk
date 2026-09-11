@@ -17,17 +17,17 @@
   Measured 2026-08-20, after that fix, the two runtimes agree exactly:
 
     clojure -M:test        Ran 23 tests containing 74 assertions, 0 failures
-    nbb run-tests.cljs         23 tests containing 74 assertions, 0 failures
+    nbb run-tests.cljk         23 tests containing 74 assertions, 0 failures
 
   Every namespace is listed explicitly, and the list is the point. There was
-  already a cljs entry point here (test/datom/cljs_runner.cljc) but it named
+  already a cljs entry point here (test/datom/cljs_runner.cljk) but it named
   three of the four test namespaces; kotobase.datom-plan-test was absent, so
   it ran 21 tests where the JVM ran 23 and nothing reported the difference.
   clojure -M:test finds namespaces by scanning test/, a cljs runner cannot,
   and a namespace left off a cljs runner does not fail -- it silently never
   runs.
 
-    nbb --classpath src:test run-tests.cljs"
+    nbb --classpath src:test run-tests.cljk"
   (:require [cljs.test :as t]
             [datom.source-test]
             [datom.source.adjacency-test]
